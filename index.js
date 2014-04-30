@@ -1,5 +1,10 @@
-function setupNBody() {
+var graph;
 
+function setupNBody() {
+	graph = new Graph();
+	graph.init();
+	graph.readFile("data/graph.json");
+	
 }
 
 function setupCL() {
