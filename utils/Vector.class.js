@@ -18,7 +18,7 @@ function Vector() {
 		},
 		print : function() {
 			for (var i = 0; i < length; i++) {
-				console.log(data[i] + " ");
+				console.log(data[i]);
 			}
 		}
 	}
