@@ -1,5 +1,6 @@
 var u;
 var graph;
+var numEdges;
 var numParticles;
 var initPos = [];
 var initVel = [];
@@ -9,6 +10,20 @@ var pos = [];	// output position
 var numBodies;	// No. of particles
 
 var nodeAttrArray = [];
+var attrVecLength = 1;		// 属性长度，几个属性，目前是单属性
+
+var edgeInd = [];	// maps node indices into edgeData array.
+// edgeInd[nodeID] ==> edgeID
+// edgeData[edgeID] = first neighbor of nodeID
+// edgeData[edgeID + 1] = second neighbor of nodeID
+// edgeData[edgeID + 2] = third neighbor of nodeID
+// ...
+// edgeInd[nodeID] = -1 ==> no edges adjacent to this node
+var edgeData = [];	//neighbor indices. Indexed into by edgeInd
+var edgeForceData = []; //spring coefficient and length for each edge
+
+var clusterCenters = [];
+var clusterMembership = [];
 
 var BufferNames = {
 	CURRENT_POS : 0,
@@ -40,6 +55,7 @@ function setupNBody() {
 		// 存储需要的数据
 		numParticles = graph.getNodeCount();
 		numBodies = numParticles;
+		console.log("numBodies = " + numBodies);
 		nodeAttrArray = graph.getColData("group");
 
 		initPos = [];
@@ -59,12 +75,83 @@ function setupNBody() {
 
 			// 质量
 			initPos[index + 3] = 1.0;
+		}
+
+		for (var i = 0; i < 4 * numBodies; i++) {
 			// 速率
 			initVel[i] = 0;
+			clusterMembership[i] = 0;
+		}
+		for (var i = 0; i < 16 * numBodies; i++) {
+			clusterCenters[i] = 0;
 		}
 
 		pos = initPos;
 		vel = initVel;
+
+		// setup edges
+		var addedEdges = [];
+		for (var i = 0; i < numBodies; i++) {
+			addedEdges[i] = new Vector();
+		}
+		numEdges = 0; 
+		// 这里要用set
+		for (var i = 0; i < graph.getEdgeCount(); i++) {
+			var e = graph.getEdge(i);
+			var s = e.getSource();
+			var t = e.getTarget();
+			if (addedEdges[s].contains(t)) {
+				console.log("重复的边：(" + s + ", " + t + ")");
+			} else {
+				addedEdges[s].push_back(t);
+				addedEdges[t].push_back(s);
+				numEdges += 1;
+			}
+		}
+		console.log("numEdges = " + numEdges);
+
+		for (var i = 0; i < 4 * numBodies; i++) {
+			edgeInd[i] = 0;
+		}
+		for (var i = 0; i < 2 * numEdges; i++) {
+			edgeData[i] = 0;
+		}
+		for (var i = 0; i < 2 * 4 * numEdges; i++) {
+			edgeForceData[i] = 0;
+		}
+
+		for (var i = 0, j = 0; i < numBodies; i++) {
+			if (addedEdges[i].size() > 0) {
+				edgeInd[i * 4] = j;
+				edgeInd[i * 4 + 1] = addedEdges[i].size();
+
+				var nAttr1 = nodeAttrArray[i], nAttr2;
+				for (var k = 0; k < addedEdges[i].size(); k++) {
+					var eI = j;
+					var efI = j * 4;
+					nAttr2 = nodeAttrArray[t];
+					// float sprCoe = springCoePatch->interpolate(nAttr1, nAttr2, minSprCoef, maxSprCoef);
+					var sprCoe = 0.0001;
+					if (1) {	// useDefaultForces
+						edgeForceData[efI] = 0.0001;
+					} else {
+						edgeForceData[efI] = sprCoe;
+					}
+
+					var sprLen = 50;
+					if (1) {	// useDefaultForces
+						edgeForceData[efI + 1] = 50;
+					} else {
+						edgeForceData[efI + 1] = 50;
+					}
+					edgeData[eI] = t;
+					j++;
+				}
+			} else {
+				edgeInd[i * 4] = -1;
+			}
+		}
+		setupCL();
 	});
 }
 
@@ -77,9 +164,6 @@ var globalWS;
 var localWS;
 
 function setupCL() {
-	var output = document.getElementById("output");
-	
-	output.innerHTML = "aa";
 	try {
 		if (window.webcl == undefined) {
 			alert("Unfortunately your system does not support WebCL. " +
@@ -89,74 +173,99 @@ function setupCL() {
 		}
 		u = new CLUnit();
 
-		// Generate input vectors
-		// var vectorLength = 30;
-		var UIvector1 = new Float32Array(vectorLength);
-		var UIvector2 = new Float32Array(vectorLength);
-		for (var i = 0; i < vectorLength; i = i + 1) {
-			UIvector1[i] = Math.floor(Math.random() * 100) + 0.1; //Random number 0..99
-			UIvector2[i] = Math.floor(Math.random() * 100) + 0.1; //Random number 0..99
-		}
-
-		output.innerHTML += "<br>Vector length = " + vectorLength;
-
-		// Reserve buffers
-		bufSize = vectorLength * 4; // size in bytes
-		output.innerHTML += "<br>Buffer size: " + bufSize + " bytes";
-		bufIn1 = u.createBuffer(WebCL.MEM_READ_ONLY, bufSize);
-		bufIn2 = u.createBuffer(WebCL.MEM_READ_ONLY, bufSize);
-		bufOut = u.createBuffer(WebCL.MEM_WRITE_ONLY, bufSize);
-
-		// Create and build program for the first device
 		u.createProgram("clProgramVectorAdd");
-
-		// Create kernel and set arguments
 		u.createKernel("ckVectorAdd");
-		u.setArg(0, bufIn1);
-		u.setArg(1, bufIn2);
-		u.setArg(2, bufOut);
-		u.setArg(3, new Uint32Array([vectorLength]));
-
 		// Create command queue using the first available device
 		u.createCommandQueue();
 
-		// Write the buffer to OpenCL device memory
-		u.enqueueWriteBuffer(bufIn1, bufSize, UIvector1);
-		u.enqueueWriteBuffer(bufIn2, bufSize, UIvector1);
+		u.createBuffer(BufferNames.NODE_ATTR_DATA, WebCL.MEM_READ_ONLY, nodeAttrArray.length * 4);
+		u.writeData(BufferNames.NODE_ATTR_DATA, nodeAttrArray);
+		u.flush();
+
+		u.createBuffer(BufferNames.CURRENT_POS, WebCL.MEM_READ_WRITE, numBodies * 16);	// sizeof(cl_float4) = 16
+		u.writeData(BufferNames.CURRENT_POS, pos);
+
+		u.createBuffer(BufferNames.NEW_POS, WebCL.MEM_READ_WRITE, numBodies * 16);
+		u.flush();
+
+		u.createBuffer(BufferNames.EDGE_IND, WebCL.MEM_READ_ONLY, numBodies * 16);
+		u.writeData(BufferNames.EDGE_IND, edgeInd);
+		u.flush();
+		
+		if (0 == numEdges) {
+			u.createBuffer(BufferNames.EDGE_DATA, WebCL.MEM_READ_ONLY, 4);
+		} else {
+			u.createBuffer(BufferNames.EDGE_DATA, WebCL.MEM_READ_ONLY, 2 * numEdges * 4);
+			u.writeData(BufferNames.EDGE_DATA, edgeData);
+			u.flush();
+		}
+
+		if (0 == numEdges) {
+			u.createBuffer(BufferNames.EDGE_FORCE_DATA, WebCL.MEM_READ_ONLY, 4);
+		} else {
+			u.createBuffer(BufferNames.EDGE_FORCE_DATA, WebCL.MEM_READ_ONLY, 2 * 4 * numEdges * 4);
+			u.writeData(BufferNames.EDGE_FORCE_DATA, edgeForceData);
+			u.flush();
+		}
+
+		u.createBuffer(BufferNames.CURRENT_VEL, WebCL.MEM_READ_WRITE, numBodies * 16);
+		u.writeData(BufferNames.CURRENT_VEL, vel);
+		u.flush();
 
 
-		// Init ND-range
-		localWS = [8];
-		globalWS = [Math.ceil(vectorLength / localWS) * localWS];
+		u.createBuffer(BufferNames.NEW_VEL, WebCL.MEM_READ_WRITE, numBodies * 16);
 
-		output.innerHTML += "<br>Global work item size: " + globalWS;
-		output.innerHTML += "<br>Local work item size: " + localWS;
+		u.createBuffer(BufferNames.CLUSTER_CENTERS, WebCL.MEM_WRITE_ONLY, numBodies * 16);
+		u.writeData(BufferNames.CLUSTER_CENTERS, clusterCenters);
 
-		// Execute (enqueue) kernel
-		u.enqueueNDRangeKernel(globalWS, localWS);
-
-		// Read the result buffer from OpenCL device
-		var outBuffer = u.enqueueReadBuffer(bufOut, bufSize, vectorLength);
+		u.createBuffer(BufferNames.CLUSTER_MEMBERS, WebCL.MEM_WRITE_ONLY, numBodies * 4);
+		u.writeData(BufferNames.CLUSTER_MEMBERS, clusterMembership);
 		u.finish();
 
-		//Print input vectors and result vector
-		output.innerHTML += "<br>Vector1 = ";
-		for (var i = 0; i < vectorLength; i = i + 1) {
-			output.innerHTML += UIvector1[i] + ", ";
-		}
-		output.innerHTML += "<br>Vector2 = ";
-		for (var i = 0; i < vectorLength; i = i + 1) {
-			output.innerHTML += UIvector2[i] + ", ";
-		}
-		output.innerHTML += "<br>Result = ";
-		for (var i = 0; i < vectorLength; i = i + 1) {
-			output.innerHTML += outBuffer[i] + ", ";
-			pos[i] = outBuffer[i];
-		}
+		
+		/**
+		 * setup patch data    980行
+		 */
 
-		delete UIvector1;
-		delete UIvector2;
-		delete outBuffer;
+
+
+		// console.log(nodeAttrArray);
+		// var d = u.getBufferData(BufferNames.CURRENT_POS)
+		// console.log(d);
+
+		// u.createBuffer(BufferNames.BUFIN1, WebCL.MEM_READ_ONLY, bufSize);
+		// u.writeData(BufferNames.BUFIN1, UIvector1);
+
+		// u.createBuffer(BufferNames.BUFIN2, WebCL.MEM_READ_ONLY, bufSize);
+		// u.writeData(BufferNames.BUFIN2, UIvector2);
+
+		// u.createBuffer(BufferNames.BUFOUT, WebCL.MEM_WRITE_ONLY, bufSize);
+
+		// var currArg = 0;
+		// u.setArg(currArg++, u.getBuffer(BufferNames.BUFIN1));
+		// u.setArg(currArg++, u.getBuffer(BufferNames.BUFIN2));
+		// u.setArg(currArg++, u.getBuffer(BufferNames.BUFOUT));
+		// u.setArg(currArg++, new Uint32Array([vectorLength]));
+
+		// // Init ND-range
+		// localWS = [8];
+		// globalWS = [Math.ceil(vectorLength / localWS) * localWS];
+
+
+		// // Execute (enqueue) kernel
+		// u.enqueueNDRangeKernel(globalWS, localWS);
+
+		// // Read the result buffer from OpenCL device
+		// // var outBuffer = u.enqueueReadBuffer(bufOut, bufSize, vectorLength);
+		// var outBuffer = u.getBufferData(BufferNames.BUFOUT, vectorLength)
+		// u.finish();
+
+		// console.log(outBuffer);
+		
+
+		// UIvector1 = null;
+		// UIvector2 = null;
+		// outBuffer = null;
 	} catch (e) {
 		console.log(e.message);
 	}
@@ -165,7 +274,6 @@ function setupCL() {
 
 function setup() {
 	setupNBody();
-	setupCL();
 }
 
 function getData() {
@@ -178,38 +286,28 @@ var ttt = 0;
 function loop() {
 	timer = setInterval(function() {
 		// Generate input vectors
-		var vectorLength = 30;
-		var UIvector1 = new Float32Array(vectorLength);
-		var UIvector2 = new Float32Array(vectorLength);
-		for (var i = 0; i < vectorLength; i = i + 1) {
-			UIvector1[i] = Math.floor(Math.random() * 100) + 0.1; //Random number 0..99
-			UIvector2[i] = Math.floor(Math.random() * 100) + 0.1; //Random number 0..99
-		}
+		// var vectorLength = 30;
+		// var UIvector1 = new Float32Array(vectorLength);
+		// var UIvector2 = new Float32Array(vectorLength);
+		// for (var i = 0; i < vectorLength; i = i + 1) {
+		// 	UIvector1[i] = Math.floor(Math.random() * 100) + 0.1; //Random number 0..99
+		// 	UIvector2[i] = Math.floor(Math.random() * 100) + 0.1; //Random number 0..99
+		// }
 
-		bufIn1 = u.createBuffer(WebCL.MEM_READ_ONLY, bufSize);
-		bufIn2 = u.createBuffer(WebCL.MEM_READ_ONLY, bufSize);
-		bufOut = u.createBuffer(WebCL.MEM_WRITE_ONLY, bufSize);
+		// u.writeData(BufferNames.BUFIN1, UIvector1);
+		// u.writeData(BufferNames.BUFIN2, UIvector2);
 
-		u.setArg(0, bufIn1);
-		u.setArg(1, bufIn2);
-		u.setArg(2, bufOut);
-		u.setArg(3, new Uint32Array([vectorLength]));
+		// u.enqueueNDRangeKernel(globalWS, localWS);
+		// var outBuffer = u.getBufferData(BufferNames.BUFOUT, vectorLength)
+	
+		// u.finish();
 
-		// Write the buffer to OpenCL device memory
-		u.enqueueWriteBuffer(bufIn1, bufSize, UIvector1);
-		u.enqueueWriteBuffer(bufIn2, bufSize, UIvector1);
-
-		u.enqueueNDRangeKernel(globalWS, localWS);
-
-		var outBuffer = u.enqueueReadBuffer(bufOut, bufSize, vectorLength);
-		u.finish();
-
-		console.log(outBuffer);
+		// console.log(outBuffer);
 
 
-		delete UIvector1;
-		delete UIvector2;
-		delete outBuffer;
+		// UIvector1 = null;
+		// UIvector2 = null;
+		// outBuffer = null;
 		ttt++;
 	}, 1);
 }

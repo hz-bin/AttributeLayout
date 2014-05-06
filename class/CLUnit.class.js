@@ -5,14 +5,44 @@ function CLUnit() {
 	var device;
 	var kernel;
 	var cmdQueue;
+	var buffers = new Map();
 
-	this.createBuffer = function(memFlags, bytes) {
-		return ctx.createBuffer(memFlags, bytes);
+	this.createBuffer = function(id, memFlags, bytes) {
+		var buf = ctx.createBuffer(memFlags, bytes);
+		var obj = new CLDataObject(buf, bytes);
+		buffers.put(id, obj);
 	};
 
-	this.writeData = function(id, ptr) {
+	// data 是数组类型，data = []
+	this.writeData = function(id, data) {
+		var obj = buffers.get(id);
+		var buf = obj.getBuffer();
+		var size = obj.getSize();
 
+		var cldata = new Float32Array(data.length);
+		for (var i = 0; i < data.length; i++) {
+			cldata[i] = data[i];
+		}
+		cmdQueue.enqueueWriteBuffer(buf, false, 0, size, cldata);
+		obj.setBuffer(buf);
+		buffers.put(id, obj);
 	};
+
+	this.getBuffer = function(id) {
+		var obj = buffers.get(id)
+		return obj.getBuffer();
+	};
+
+	this.getBufferData = function(id) {
+		var obj = buffers.get(id);
+		var buf = obj.getBuffer();
+		var size = obj.getSize();
+		var outBuffer = new Float32Array(size / 4);
+		// Read the result buffer from OpenCL device
+		cmdQueue.enqueueReadBuffer(buf, false, 0, size, outBuffer);
+		return outBuffer;
+	}
+
 
 	this.createProgram = function(name) {
 		var kernelSrc = loadKernel(name);
@@ -42,25 +72,17 @@ function CLUnit() {
 		cmdQueue = ctx.createCommandQueue(device);
 	}
 
-	this.enqueueWriteBuffer = function(bufIn, bufSize, data) {
-		// Write the buffer to OpenCL device memory
-		cmdQueue.enqueueWriteBuffer(bufIn, false, 0, bufSize, data);
-	};
-
 	this.enqueueNDRangeKernel = function(globalWS, localWS) {
 		// Execute (enqueue) kernel
 		cmdQueue.enqueueNDRangeKernel(kernel, globalWS.length, null, globalWS, localWS);
-	};
-
-	this.enqueueReadBuffer = function(bufOut, bufSize, vectorLength) {
-		var outBuffer = new Float32Array(vectorLength);
-		// Read the result buffer from OpenCL device
-		cmdQueue.enqueueReadBuffer(bufOut, false, 0, bufSize, outBuffer);
-		return outBuffer;
 	};
 
 	this.finish = function() {
 		//Finish all the operations
 		cmdQueue.finish();
 	};
+
+	this.flush = function() {
+		cmdQueue.flush();
+	}
 }
