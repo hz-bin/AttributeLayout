@@ -4,9 +4,10 @@ var numEdges;
 var numParticles;
 var initPos = [];
 var initVel = [];
-var vel = [];
 
+var vel = [];
 var pos = [];	// output position
+
 var numBodies;	// No. of particles
 
 var nodeAttrArray = [];
@@ -22,8 +23,23 @@ var edgeInd = [];	// maps node indices into edgeData array.
 var edgeData = [];	//neighbor indices. Indexed into by edgeInd
 var edgeForceData = []; //spring coefficient and length for each edge
 
+var useClusters = 0;
 var clusterCenters = [];
 var clusterMembership = [];
+var numClusters = 0;
+var totalThreads = 0;
+
+var delT = 1.0;
+var espSqr = 500;
+var noEdgeForces = 0;	// 1 表示不考虑边的力，0表示考虑边的力
+var useInvDist = 0;
+var useUserFunctions = 0;
+var useDefaultForces = 0;
+
+var localPos = [];
+var localNodeAttrData = [];
+var groupSize = 32;
+var dragCoe = 0.01;
 
 var BufferNames = {
 	CURRENT_POS : 0,
@@ -42,7 +58,9 @@ var BufferNames = {
     CLUSTER_MEMBERS : 13,
     GRAV_PATCH_BUF : 14,
     SPRINGC_PATCH_BUF : 15,
-    SPRINGL_PATCH_BUF : 16
+    SPRINGL_PATCH_BUF : 16,
+    LOCAL_POS : 17,
+    LOCAL_NODE_ATTR : 18
 };
 
 var WIDTH = 800;
@@ -72,9 +90,17 @@ function setupNBody() {
 				initPos[index + j] = random.getRandom(0.01, 20);
 			}
 			initPos[index + 2] = 0.0;
-
 			// 质量
 			initPos[index + 3] = 1.0;
+		}
+
+		for (var i = 0; i < groupSize; i++) {
+			var index = 4 * i;
+			localPos[index] = 0;
+			localPos[index + 1] = 0;
+			localPos[index + 2] = 0;
+			localPos[index + 3] = 0;
+			localNodeAttrData[i] = 0;
 		}
 
 		for (var i = 0; i < 4 * numBodies; i++) {
@@ -222,11 +248,76 @@ function setupCL() {
 		u.writeData(BufferNames.CLUSTER_MEMBERS, clusterMembership);
 		u.finish();
 
+		u.createBuffer(BufferNames.LOCAL_POS, WebCL.MEM_READ_WRITE, groupSize * 4);
+		u.writeData(BufferNames.LOCAL_POS, localPos);
+
+		u.createBuffer(BufferNames.LOCAL_NODE_ATTR, WebCL.MEM_READ_WRITE, groupSize * attrVecLength);
+		u.writeData(BufferNames.LOCAL_NODE_ATTR, localNodeAttrData);
+		u.flush();
+
 		
 		/**
-		 * setup patch data    980行
+		 * setup patch data
 		 */
+		// gravity
+		var patchTotalSize = 8;
+		var gravPatchData = [2, 2, -0.001, -1000, 0, 1, 1, 1];
+		u.createBuffer(BufferNames.GRAV_PATCH_BUF, WebCL.MEM_WRITE_ONLY, patchTotalSize * 4);
+		u.writeData(BufferNames.GRAV_PATCH_BUF, gravPatchData);
+		u.flush();
 
+		// spring coefficient
+		// patchTotalSize = 8;
+		var springCPatchData = [2, 2, 0.000001, 0.001, 1, 0.5, 0.5, 1];
+		u.createBuffer(BufferNames.SPRINGC_PATCH_BUF, WebCL.MEM_WRITE_ONLY, patchTotalSize * 4);
+		u.writeData(BufferNames.SPRINGC_PATCH_BUF, springCPatchData);
+		u.flush();
+
+		// spring length
+		// patchTotalSize = 8;
+		var springLPatchData = [2, 2, 0.1, 30, 1, 0.5, 0.5, 1];
+		u.createBuffer(BufferNames.SPRINGL_PATCH_BUF, WebCL.MEM_WRITE_ONLY, patchTotalSize * 4);
+		u.writeData(BufferNames.SPRINGL_PATCH_BUF, springLPatchData);
+		u.flush();
+		u.finish();
+
+		/**
+		 * 设置参数
+		 */
+		var currArg = 0;
+		u.setArg(currArg++, u.getBuffer(BufferNames.CURRENT_POS));	//0
+		u.setArg(currArg++, u.getBuffer(BufferNames.CURRENT_VEL));
+		u.setArg(currArg++, new Uint32Array([numBodies]));
+		u.setArg(currArg++, new Uint32Array([useClusters]));	// 3
+		u.setArg(currArg++, u.getBuffer(BufferNames.CLUSTER_CENTERS));
+		u.setArg(currArg++, u.getBuffer(BufferNames.CLUSTER_MEMBERS));
+		u.setArg(currArg++, new Uint32Array([numClusters]));	// 6
+		totalThreads = numBodies;		// ???????????????????????????????????????????????
+		u.setArg(currArg++, new Uint32Array([totalThreads]));
+		var offset = 0;		// ????????????????????????????????????????
+		u.setArg(currArg++, new Uint32Array([offset]));
+		u.setArg(currArg++, new Float32Array([delT]));		// 9
+		u.setArg(currArg++, new Float32Array([espSqr]));
+		u.setArg(currArg++, new Uint32Array([noEdgeForces]));
+		u.setArg(currArg++, new Uint32Array([useInvDist]));		// 12
+		u.setArg(currArg++, new Uint32Array([useUserFunctions]));
+		u.setArg(currArg++, u.getBuffer(BufferNames.LOCAL_POS));
+		u.setArg(currArg++, u.getBuffer(BufferNames.LOCAL_NODE_ATTR));	// 15
+		u.setArg(currArg++, u.getBuffer(BufferNames.NEW_POS));
+		u.setArg(currArg++, u.getBuffer(BufferNames.NEW_VEL));
+		u.setArg(currArg++, u.getBuffer(BufferNames.EDGE_IND));		// 18
+		u.setArg(currArg++, u.getBuffer(BufferNames.EDGE_DATA));
+		u.setArg(currArg++, u.getBuffer(BufferNames.EDGE_FORCE_DATA));
+		u.setArg(currArg++, u.getBuffer(BufferNames.NODE_ATTR_DATA));	// 21
+		u.setArg(currArg++, new Uint32Array([attrVecLength]));
+		u.setArg(currArg++, new Float32Array([dragCoe]));
+		u.setArg(currArg++, new Uint32Array([useDefaultForces]));	// 24
+		u.setArg(currArg++, u.getBuffer(BufferNames.GRAV_PATCH_BUF));
+		u.setArg(currArg++, u.getBuffer(BufferNames.SPRINGC_PATCH_BUF));
+		u.setArg(currArg++, u.getBuffer(BufferNames.SPRINGL_PATCH_BUF));	// 27
+
+		localWS = [];
+		globalWS = [];
 
 
 		// console.log(nodeAttrArray);
@@ -325,6 +416,6 @@ function start() {
 	
 	setup();
 
-	loop();
+	// loop();
 
 })();

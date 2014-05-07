@@ -6,9 +6,14 @@
 		return t;
 	}
 
-	
+	function add(a, b, c) {
+		return a + b + c;
+	}
 
 	buf = add(3, 4);
 
-	alert(buf);
+	// alert(buf);
+
+	alert(add(2, 4, 5));
+
 })();
