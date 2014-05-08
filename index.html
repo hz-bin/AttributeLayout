@@ -3,20 +3,551 @@
 <head>
 	<title>Attribute Based Layout</title>
 	<meta http-equiv="Content-Type" content="text/html;charset=utf-8">
-	<script id="clProgramVectorAdd" type="text/x-opencl">
-		float add(float a, float b) {
-			return a + b;
+	<script id="nbody_rk4" type="text/x-opencl">
+		float getPatchVal(float a1, float a2, const __global float *patchData) {
+			a1 = clamp(a1, 0.0f, 1.0f);
+			a2 = clamp(a2, 0.0f, 1.0f);
+
+		    const int XRES = convert_int(patchData[0]);
+		    const int YRES = convert_int(patchData[1]);
+		    const float MIN = patchData[2];
+		    const float MAX = patchData[3];
+		    const __global float *VALS = patchData + 4;
+
+		    int idY = convert_int(a2 * (YRES - 1)); //lower y index
+		    int idX = convert_int(a1 * (XRES - 1)); //lower x index
+		    int idXU = convert_int(((int)(idX + 1) >= XRES) ? idX : idX + 1); //upper x index
+		    int idYU = convert_int(((int)(idY + 1) >= YRES) ? idY : idY + 1); //upper y index
+
+		    float vLL = VALS[(idY * XRES) + idX];
+		    float vLU = VALS[(idY * XRES) +idXU];
+		    float vUL = VALS[(idYU * XRES) + idX];
+		    float vUU = VALS[(idYU * XRES) + idXU];
+
+		    float aX = (a1 * (convert_float(XRES) - 1.0f)) - (float)idX;
+		    float vXL = mix(vLL, vLU, aX);
+
+		    float vXH = mix(vUL, vUU, aX);
+
+		    float aY = (a2 * (convert_float(YRES) - 1.0f)) - (float)idY;
+		    float val = mix(vXL, vXH, aY);
+
+		    float g = mix(MIN, MAX, val);
+
+		    return g;
 		}
-		kernel void ckVectorAdd(global float * vectorIn1,
-		    global float * vectorIn2,
-		    global float * vectorOut,
-		    uint uiVectorWidth) {
-		    uint x = get_global_id(0);
-		    if (x >= uiVectorWidth) {
-		        return;
+
+		float getGravVal(float a1, float a2, const global float *patchData) {
+		//    float val = ((1.0f - fabs(a2 - a1)) - 0.5f) * 2.0f;
+		    float val = 1.0f - (2.0f * fabs(a2 - a1));
+		    if (val < 0.0f) {
+		        val *= 2.0f;
 		    }
-		    // add the vector elements
-		    vectorOut[x] = add(vectorIn1[x], vectorIn2[x]);
+		    return val;
+		}
+
+		float eucDist(
+		        float *a1,
+		        __local float *a2,
+		        uint len
+		) {
+		    //TODO vectorize this
+		    float sum = 0.0f;
+		    float val = 0.0f;
+		    float *end = a1 + len;
+		    while (a1 != end) {
+		    	val = *a2 - *a1;
+		    	sum += val * val;
+		    	++a1;
+		    	++a2;
+		    }
+		    return sqrt(sum);
+		}
+
+		float simMetric(
+		        float *a1,
+		        local float *a2,
+		        uint len
+		) {
+			//using Euclidean distance
+		    float dist = eucDist(a1,a2,len);
+		//    return 1.0f - (2.0f * dist) / sqrt(convert_float(len));
+		    float maxLen = sqrt(convert_float(len));
+		    
+		//	float distThresh = maxLen / 4.0f;
+			float distThresh = maxLen / 2.0f;
+			
+			float leftSize = distThresh;
+			float rightSize = 1.0f - distThresh;
+			
+			float diff = dist - distThresh;
+		//	float diff = ((2.0f * (maxLen - dist)) - maxLen) / maxLen;
+			
+			if (diff < 0) {
+				return -diff / leftSize;
+			} else {
+				return -diff / rightSize;
+			}
+
+		}
+
+		float getGravVal_vec(
+		        float *a1,
+		        local float *a2,
+		        uint len,
+		        const global float *patchData
+	    ) {
+		    float sim = simMetric(a1,a2,len);
+		    return sim;
+		}
+
+
+		float4 calcForce2D_base(
+		        float4 n1, float4 n2,
+		        float m1, float m2,
+		        float a1, float a2,
+		        const global float *patchData,
+		        uint useUserFunctions
+		) {
+		    // Calculate acceleartion caused by particle j on particle i
+		    float mm = m1 * m2;
+		    float4 r = n2 - n1;
+		    r.z = 0.0f;
+		    r.w = 0.0f;
+		    
+		    if (0.0f == r.x && 0.0f == r.y) {
+		        unsigned int gid = get_global_id(0);
+		        r.x = (pow(convert_float(-1), convert_float(gid)) * 0.5f) / 50.0f;
+		//        r.y = (pow(convert_float(-1), convert_float(gid + 1)) * 0.5f) / 50.0f;
+		        r.y = (pow(convert_float(-1), convert_float(gid)) * 0.5f) / 50.0f;
+		//        DBGPRINT(("grav R = 0, setting r = %v4f\n", r));
+		    }
+		    
+		    float rLength = length(r);
+		    //float distSqr = r.x*r.x + r.y*r.y;
+		    float distFac = rLength * rLength;
+		    //float distFac = rLength * rLength * rLength;
+		        
+		    //float invDistSqr = 1.0f / (distSqr + epsSqr);
+		    float invDistFac = 1.0f / distFac;
+		//    float invDistFacCube = invDistFac * invDistFac * invDistFac;
+		    
+		    float g = 0.0f;
+		    if (1 == useUserFunctions) {
+		        g = getGravVal(a1,a2,patchData);
+		    } else {
+		        g = getPatchVal(a1,a2, patchData);
+		    }
+		    
+		    float4 rNorm = normalize(r);
+		    float f = g * mm * invDistFac;
+		    //float f = g * invDistFac; //assumes each mass has a value of 1.0f
+		    //        float f = g * invDistFacCube; //assumes each mass has a value of 1.0f
+		    //float f = g * 1000.0f * invDistFac; //use scaling factor
+
+		    float4 fV = f * rNorm;
+		    
+		//    DBGPRINT(("gForce = %v4f\n", (fV)));
+
+		    return fV;
+		}
+
+		float4 calcGravForce_cluster_vec(
+		        float4 n1, float4 n2,
+		        float m1, float m2,
+		        float *a1, local float *a2,
+		        uint attrVecLength,
+		        const global float *patchData,
+		        uint useUserFunctions
+		) {
+		    // Calculate acceleartion caused by particle j on particle i
+		    float mm = m1 * m2;
+		    float4 r = n2 - n1;
+		    r.w = 0.0f;
+		    float rLength = length(r);
+		    float distFac = 0.0f;
+		    const float distThresh = 5.0f;
+		    
+		    float g = 0.0f;
+		    if (1 == useUserFunctions) {
+		//        g = getGravVal(a1,a2, patchData);
+		        g = getGravVal_vec(a1,a2, attrVecLength, patchData);
+		    } else {
+		//        g = getPatchVal(a1,a2, patchData);
+		    }
+		    
+		    //if nodes are similar (i.e. attracted) and "close" to each other, make
+		    //them slightly repulsed so that clusters do not become a single point.
+		    if (g > 0.0f && rLength < distThresh) {
+		        g = 0.0f;
+		    }
+		    
+		    if (g > 0.0f) {
+		        //attractive force
+		        if (rLength < distThresh) {
+		            return (float4)(0.0f);
+		        } else {
+		            distFac = rLength * rLength;
+		        }
+		    } else if (rLength < 0.0000000001) {	// SMALL_NUM = 1E-10
+		        //repulsive force
+		        const float gidF = convert_float(get_global_id(0));
+		        const float gSizeF = convert_float(get_global_size(0));
+		        r.x = (pow(-1.0f,gidF) * gidF) / gSizeF;
+		        r.y = (pow(-1.0f,gidF + 1.0f) * gidF) / gSizeF;
+		        r.z = (pow(-1.0f,gidF) * gidF) / gSizeF;
+		        rLength = length(r);
+		        distFac = 1.0f / (rLength * rLength);
+		    } else {
+		//        distFac = 1.0f / (rLength * rLength * rLength);
+		        distFac = 1.0f / (rLength * rLength);
+		    }
+		        
+		    float4 rNorm = (1.0f/rLength) * r;
+		    float f = g * mm * distFac;
+		    
+		    float4 fV = f * rNorm;
+		       
+		    return fV;
+		}
+
+		kernel void nbody_sim_2D_rk4 (
+				global float4* pos, //0
+				global float4* vel,
+				int numBodies,
+				uint useClusters,		//3
+				const global float4 *clusters,
+				const global int *clusterMembers,
+				int numClusters,		// 6
+				int totalThreads,
+				int offset,
+				float deltaTime,		// 9
+				float epsSqr,
+				uint computeEdges,
+				uint useInvDist,		// 12
+				uint useUserFunctions,
+				local float4* localPos,
+				local float *localNodeAttrData,	// 15
+				global float4* newPosition,
+				global float4* newVelocity,
+				const global int4 *edgeInd,		// 18
+				const global int *edgeData,
+				const global float4 *edgeForceData,
+				const global float *nodeAttrData,		// 21
+				uint attrVecLength,
+				float dragCoe,
+				uint useDefaults,			// 24
+				const global float *gravPatchData,
+				const global float *springCPatchData,
+				const global float *springLPatchData		// 27
+        ) {
+		    unsigned int gid = get_global_id(0);
+		    unsigned int tid = get_local_id(0);
+		    unsigned int localSize = get_local_size(0);
+
+		    const unsigned int numTiles = ceil((float)totalThreads / (float)localSize);
+		    
+		    const int gIndex = gid + offset;	// 第几个点
+		        
+		    // position of this work-item
+		    float4 myPos = (float4)(0.0);
+		    float mass = 0.0, mass2 = 0.0;
+		    float4 pPos = (float4)(0.0);
+		    float4 acc = (float4)(0.0);
+		    float4 force = (float4)(0.0);
+		    float nAttr1 = 0.0, nAttr2 = 0.0;
+		    
+		    float nAttr1Vec[1024];		// MAX_ATTR_VEC_LENGTH = 1024
+		    local float *nAttr2Vec;
+		    // local float4* localPos;
+		    // local float *localNodeAttrData;
+		    
+		    int4 ei = (int4)(-1);
+
+		    //temporary variables for RK4
+		    float4 K_1, K_2, K_3, K_4; //velocity
+		    float4 L_1, L_2, L_3, L_4; //accelleration
+
+		    float4 oldVel = (float4)(0.0);
+		    float4 newVel = oldVel;
+		        
+		    //only load data if we have a valid index into the array
+		    if (gIndex < numBodies) {
+		        myPos = pos[gIndex];
+		        mass = myPos.w;
+		        myPos.z = 0.0f;
+		        myPos.w = 0.0f;
+		        pPos = myPos;
+		        
+		        nAttr1 = nodeAttrData[gIndex];
+		        
+		        uint aIDX = gIndex * attrVecLength;
+		        for (uint i = 0; i < attrVecLength; ++i) {
+		            nAttr1Vec[i] = nodeAttrData[aIDX + i];
+		        }
+		        
+		        oldVel = vel[gIndex];
+		        oldVel.z = 0.0f;
+		        oldVel.w = 0.0f;
+		        
+		        newVel = oldVel;
+		        
+		        ei = edgeInd[gIndex];
+		    }
+
+		//     // DBGPRINT(("numBodies = %d\n", numBodies));
+		//     // DBGPRINT(("localSize = %d\n", localSize ));
+		//     // DBGPRINT(("localID = %d\n", tid));
+		//     // DBGPRINT(("calculating body %d\n", gid));
+		//     // DBGPRINT(("position: %v4f\n", myPos));
+		//     // DBGPRINT(("mass : %f\n", mass));
+		//     // DBGPRINT(("edgeInd data: %v4d\n", ei));
+		//     // DBGPRINT(("numTiles %d\n\n", numTiles));
+
+		    for (int rk_I = 0; rk_I < 4; ++rk_I) {
+		        force = (float4)(0.0f);
+
+		        //calculate n-body force
+		        for(int i = 0; i < numTiles; ++i) {
+		            // load one tile into local memory
+		            int startIDX = i * localSize;
+		            int idx = startIDX + tid; //index into pos array
+		            if (idx < numBodies) {
+		                localPos[tid] = pos[idx];
+		                
+		                uint aIDX = attrVecLength * (startIDX + tid);
+		                uint laIDX = attrVecLength * tid;
+		                for (uint i = 0; i < attrVecLength; ++i) {
+		                    localNodeAttrData[laIDX + i] = nodeAttrData[aIDX + i];
+		                }
+		            }
+
+		            // Synchronize to make sure data is available for processing
+		            barrier(CLK_LOCAL_MEM_FENCE);
+
+		            // DBGPRINT(("idx = %d\n", idx));
+
+		            if (gIndex < numBodies) {
+		                for (int j = 0, jID = startIDX; jID < numBodies && j < localSize; ++j, ++jID) {
+		                    if (gIndex != jID) {
+		                        float4 n2 = localPos[j];
+		                        nAttr2 = localNodeAttrData[j];
+		                        nAttr2Vec = localNodeAttrData + (j * attrVecLength);
+		                        mass2 = n2.w;
+		                        if (1 == useInvDist) {
+		//                            force += calcGravForce_cluster(myPos, n2, mass, mass2, nAttr1, nAttr2, gravPatchData,useUserFunctions);
+		                            force += calcGravForce_cluster_vec(
+		                            		myPos, n2,
+		                            		mass, mass2,
+		                            		nAttr1Vec, nAttr2Vec,
+		                            		attrVecLength,
+		                            		gravPatchData,
+		                            		useUserFunctions);
+		                        } else {
+		                            force += calcForce2D_base(myPos, n2, mass, mass2, nAttr1, nAttr2, gravPatchData, useUserFunctions);
+		                        }
+		                    }
+		                }
+		            }
+
+		            // Synchronize so that next tile can be loaded
+		            barrier(CLK_LOCAL_MEM_FENCE);
+		        }
+
+		        
+		        //calculate force due to edges
+		        if (gIndex < numBodies) {
+		            //if node has any incident edges, calculate resulting force
+		            if (1 == computeEdges && ei.x >= 0) {
+		                int edInd = ei.x;
+		                int numEdges = ei.y;
+		                
+		                //calculate force due to edge spring (if any) for this body
+
+		//                DBGPRINT(("numEdges for %d = %d\n", gid, numEdges));
+
+		                for (int j = 0; j < numEdges; ++j) {
+		                    int posInd = edgeData[edInd + j];
+
+		                    //don't calculate self loops
+		                    //TODO looks like something is wrong with the edgeData array
+		                    // for the igraph.graphml dataset
+		                    if (gIndex == posInd || posInd >= numBodies || posInd < 0) {
+		                        // DBGPRINT(("error: gid = %d, posInd = %d", gid, posInd));
+		                        continue;
+		                    }
+		                    
+		                    float4 neighbor = pos[posInd];
+		                    nAttr2 = nodeAttrData[posInd];
+		                    
+		                    neighbor.z = neighbor.w = 0.0f;
+		                    float4 r = neighbor - myPos;
+
+		//                    DBGPRINT(("calculating edge (%d, %d)\n", gid, posInd));
+		//                    DBGPRINT(("positions: (%v4f), (%v4f)\n", myPos, neighbor));
+
+		                    //attribute based
+		//                    float sprConstant = edgeForceData[edInd + j].x;
+		//                    float sprLength = edgeForceData[edInd + j].y;
+		                    
+		                    float sprConstant = 0.0f;
+		                    float sprLength = 0.0f;
+		                    
+		                    if (1 == useUserFunctions) {	//返回0.0
+		                        // sprConstant = getSpringCVal(nAttr1, nAttr2, springCPatchData);
+		                        // sprLength = getSpringLVal(nAttr1, nAttr2, springLPatchData);
+		                        sprConstant = 0;
+		                        sprLength = 0;
+		                    } else {
+		                        sprConstant = getPatchVal(nAttr1, nAttr2, springCPatchData);
+		                        sprLength = getPatchVal(nAttr1, nAttr2, springLPatchData);
+		                    }
+		                    
+		                    // DBGPRINT(("springCPatchData: "));
+		                    // for (int dbgI = 0; dbgI < 8; ++dbgI) {
+		                    //     DBGPRINT(("%f ", springCPatchData[dbgI]));
+		                    // }
+		                    // DBGPRINT(("\nspringLPatchData: "));
+		                    // for (int dbgI = 0; dbgI < 8; ++dbgI) {
+		                    //     DBGPRINT(("%f ", springLPatchData[dbgI]));
+		                    // }
+		                    // DBGPRINT(("\nsprConstant = %f\n", sprConstant));
+		                    // DBGPRINT(("sprLength = %f\n", sprLength));
+		                    // DBGPRINT(("attrs: %f, %f\n", nAttr1, nAttr2));
+
+		                    //some constants from Prefuse used for testing
+		                    //                    float sprConstant = 0.00001f;
+		                    //                    float sprLength = 20.0f;
+
+		                    //normalize direction of force
+		                    r.z = 0.0f;
+		                    r.w = 0.0f;
+
+		                    if (0.0f == r.x && 0.0f == r.y) {
+		                        r.x = (pow(convert_float(-1), convert_float(gid)) * 0.5f) / 50.0f;
+		                        r.y = (pow(convert_float(-1), convert_float(gid + 1)) * 0.5f) / 50.0f;
+		                    }
+
+		                    //TODO length(r) and normalize(r) appear to be causing problems.
+		                    //small lengths of r do not appear to be the cause.
+		                    float rLength = length(r); //this should work, but doesn't
+
+		                    // DBGPRINT(("rLength = %f\n", rLength));
+
+		                    //NOTE: normalize(r) can cause problems if
+		                    //length(r) = 0 (at least on Intel and AMD platforms).
+
+		                    // DBGPRINT(("r = %v4f\n", r));
+
+		                    r = (1.0 / rLength) * r;
+
+		                    float disp = sprLength - rLength;
+
+		                    // DBGPRINT(("disp = %f\n", disp));
+
+		                    float sForce = -disp * sprConstant; //should work?
+		                    
+		                    force += sForce * r;
+
+		                    // DBGPRINT(("sForce = %v4f\n", (sForce * r)));
+
+		                    // DBGPRINT(("finished an edge\n\n"));
+		                }
+
+		            }
+
+		            //        force -= 0.01f * oldVel; //drag force
+		            //        force -= 0.1f * oldVel; //drag force
+		            force -= dragCoe * oldVel;
+
+		            // DBGPRINT(("total force on %d = %v4f\n", gid, force));
+
+		            acc = (1.0f / mass) * force;
+
+		            float4 velTmp;
+		            float vLength;
+		            float SPEED_LIMIT = 1.0f;
+		            switch (rk_I) {
+		            case 0:
+		                K_1 = deltaTime * oldVel;
+		                L_1 = deltaTime * acc;
+		                myPos += 0.5f * K_1;
+		                break;
+		            case 1:
+		                velTmp = oldVel + (0.5f * L_1);
+		                vLength = length(velTmp);
+		                if (vLength > SPEED_LIMIT) {
+		                    velTmp = (SPEED_LIMIT / vLength) * velTmp;
+		                }
+		                K_2 = deltaTime * velTmp;
+		                L_2 = deltaTime * acc;
+		                myPos = pPos + (0.5f * K_2);
+		                break;
+		            case 2:
+		                //            velTmp = oldVel + (0.5f * rk_L[rk_I - 1]);
+		                velTmp = oldVel + (0.5f * L_2);
+		                vLength = length(velTmp);
+		                if (vLength > SPEED_LIMIT) {
+		                    velTmp = (SPEED_LIMIT / vLength) * velTmp;
+		                }
+		                K_3 = deltaTime * velTmp;
+		                L_3 = deltaTime * acc;
+		                myPos = pPos + (0.5f * K_3);
+		                break;
+		            case 3:
+		                velTmp = oldVel + L_3;
+		                vLength = length(velTmp);
+		                if (vLength > SPEED_LIMIT) {
+		                    velTmp = (SPEED_LIMIT / vLength) * velTmp;
+		                }
+		                
+		                K_4 = deltaTime * velTmp;
+		                L_4 = deltaTime * acc;
+
+		                // DBGPRINT(("final v = (%v4f), a = (%v4f)\n", velTmp, acc));
+
+		                myPos = pPos + ((1.0f / 6.0f) * (K_1 + K_4))
+		                                 + ((1.0f / 3.0f) * (K_2 + K_3));
+		                velTmp = ((1.0f / 6.0f) * (L_1 + L_4)) +
+		                        ((1.0f / 3.0f) * (L_2 + L_3));
+
+		                vLength = length(velTmp);
+		                if (vLength > SPEED_LIMIT) {
+		                    velTmp = (SPEED_LIMIT / vLength) * velTmp;
+		                }
+		                newVel = oldVel + velTmp;
+
+		                break;
+		            }
+		            
+		            // DBGPRINT(("myPos[%d] (rk itr %d) = %v4f\n", gid, rk_I, myPos));
+		        }
+		    }
+		    
+		    //need this when using CL-GL interop since pos and newPosition both point
+		    //to the same data
+		    barrier(CLK_LOCAL_MEM_FENCE);
+		    
+		    if (gIndex < numBodies) {
+		        // DBGPRINT(("***********************************************\n"));
+		        // DBGPRINT(("updated body %d\n", gid));
+		        // DBGPRINT(("acceleration: %v4f\n", acc));
+		        // DBGPRINT(("***********************************************\n"));
+
+		        float4 newPos = myPos;
+		        
+		        newPos.w = mass;
+
+		        // DBGPRINT(("position: %v4f ----> %v4f\n", pPos, newPos));
+		        // DBGPRINT(("velocity: %v4f ----> %v4f\n\n", oldVel, newVel));
+
+		        // write to global memory
+		//        newPosition[gid] = newPos;
+		//        newVelocity[gid] = newVel;
+		        
+		        newPosition[gIndex] = newPos;
+		        newVelocity[gIndex] = newVel;
+		    }
 		}
 	</script>   
 	<script type="text/javascript">

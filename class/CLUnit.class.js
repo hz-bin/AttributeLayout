@@ -67,10 +67,6 @@ function CLUnit() {
 		kernel.setArg(id, val);
 	};
 	
-	this.setArg = function(id, size, val) {
-
-	};
-
 	this.createCommandQueue = function() {
 		// Create command queue using the first available device
 		cmdQueue = ctx.createCommandQueue(device);

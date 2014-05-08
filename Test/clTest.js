@@ -32,8 +32,8 @@ function setupCL() {
 		var UIvector1 = new Float32Array(vectorLength);
 		var UIvector2 = new Float32Array(vectorLength);
 		for (var i = 0; i < vectorLength; i = i + 1) {
-			UIvector1[i] = Math.floor(Math.random() * 100) + 0.1; //Random number 0..99
-			UIvector2[i] = Math.floor(Math.random() * 100) + 0.1; //Random number 0..99
+			UIvector1[i] = 0.1; //Random number 0..99
+			UIvector2[i] = 0.1; //Random number 0..99
 		}
 
 		output.innerHTML += "<br>Vector length = " + vectorLength;
@@ -73,7 +73,7 @@ function setupCL() {
 
 		// Read the result buffer from OpenCL device
 		// var outBuffer = u.enqueueReadBuffer(bufOut, bufSize, vectorLength);
-		var outBuffer = u.getBufferData(BufferNames.BUFOUT, vectorLength)
+		var outBuffer = u.getBufferData(BufferNames.BUFOUT)
 		u.finish();
 
 		console.log(outBuffer);
@@ -111,17 +111,19 @@ var timer;
 var ttt = 0;
 function loop() {
 	timer = setInterval(function() {
-		// Generate input vectors
-		var vectorLength = 30;
-		var UIvector1 = new Float32Array(vectorLength);
-		var UIvector2 = new Float32Array(vectorLength);
-		for (var i = 0; i < vectorLength; i = i + 1) {
-			UIvector1[i] = Math.floor(Math.random() * 100) + 0.1; //Random number 0..99
-			UIvector2[i] = Math.floor(Math.random() * 100) + 0.1; //Random number 0..99
-		}
 
-		u.writeData(BufferNames.BUFIN1, UIvector1);
-		u.writeData(BufferNames.BUFIN2, UIvector2);
+		u.setArg(0, u.getBuffer(BufferNames.BUFOUT));
+		u.setArg(1, u.getBuffer(BufferNames.BUFOUT));
+		// var out = u.getBufferData(BufferNames.BUFOUT);
+		// var in1 = [];
+		// var in2 = [];
+		// for (var i = 0; i < out.length; i++) {
+		// 	in1[i] = out[i];
+		// 	in2[i] = out[i];
+		// }
+
+		// u.writeData(BufferNames.BUFIN1, in1);
+		// u.writeData(BufferNames.BUFIN2, in2);
 
 		u.enqueueNDRangeKernel(globalWS, localWS);
 		var outBuffer = u.getBufferData(BufferNames.BUFOUT)
@@ -129,11 +131,6 @@ function loop() {
 		u.finish();
 
 		console.log(outBuffer);
-
-
-		UIvector1 = null;
-		UIvector2 = null;
-		outBuffer = null;
 		ttt++;
 	}, 1);
 }

@@ -41,6 +41,14 @@ var localNodeAttrData = [];
 var groupSize = 32;
 var dragCoe = 0.01;
 
+var globalWS;
+var localWS;
+
+var oldPosArgIndex;
+var oldVelArgIndex;
+var newPosArgIndex;
+var newVelArgIndex;
+
 var BufferNames = {
 	CURRENT_POS : 0,
     CURRENT_POS_SUB : 1,
@@ -58,9 +66,7 @@ var BufferNames = {
     CLUSTER_MEMBERS : 13,
     GRAV_PATCH_BUF : 14,
     SPRINGC_PATCH_BUF : 15,
-    SPRINGL_PATCH_BUF : 16,
-    LOCAL_POS : 17,
-    LOCAL_NODE_ATTR : 18
+    SPRINGL_PATCH_BUF : 16
 };
 
 var WIDTH = 800;
@@ -114,6 +120,8 @@ function setupNBody() {
 
 		pos = initPos;
 		vel = initVel;
+		console.log("初始位置： " + initPos);
+		console.log("初始速率： " + initVel);
 
 		// setup edges
 		var addedEdges = [];
@@ -155,7 +163,7 @@ function setupNBody() {
 				for (var k = 0; k < addedEdges[i].size(); k++) {
 					var eI = j;
 					var efI = j * 4;
-					nAttr2 = nodeAttrArray[t];
+					nAttr2 = nodeAttrArray[k];
 					// float sprCoe = springCoePatch->interpolate(nAttr1, nAttr2, minSprCoef, maxSprCoef);
 					var sprCoe = 0.0001;
 					if (1) {	// useDefaultForces
@@ -170,26 +178,19 @@ function setupNBody() {
 					} else {
 						edgeForceData[efI + 1] = 50;
 					}
-					edgeData[eI] = t;
+					edgeData[eI] = k;
 					j++;
 				}
 			} else {
 				edgeInd[i * 4] = -1;
 			}
 		}
-		setupCL();
+		setupCL(loop);
+
 	});
 }
 
-var bufSize;
-var bufIn1;
-var bufIn2;
-var bufOut;
-var vectorLength = 30;
-var globalWS;
-var localWS;
-
-function setupCL() {
+function setupCL(loopFun) {
 	try {
 		if (window.webcl == undefined) {
 			alert("Unfortunately your system does not support WebCL. " +
@@ -199,8 +200,8 @@ function setupCL() {
 		}
 		u = new CLUnit();
 
-		u.createProgram("clProgramVectorAdd");
-		u.createKernel("ckVectorAdd");
+		u.createProgram("nbody_rk4");
+		u.createKernel("nbody_sim_2D_rk4");
 		// Create command queue using the first available device
 		u.createCommandQueue();
 
@@ -247,14 +248,6 @@ function setupCL() {
 		u.createBuffer(BufferNames.CLUSTER_MEMBERS, WebCL.MEM_WRITE_ONLY, numBodies * 4);
 		u.writeData(BufferNames.CLUSTER_MEMBERS, clusterMembership);
 		u.finish();
-
-		u.createBuffer(BufferNames.LOCAL_POS, WebCL.MEM_READ_WRITE, groupSize * 4);
-		u.writeData(BufferNames.LOCAL_POS, localPos);
-
-		u.createBuffer(BufferNames.LOCAL_NODE_ATTR, WebCL.MEM_READ_WRITE, groupSize * attrVecLength);
-		u.writeData(BufferNames.LOCAL_NODE_ATTR, localNodeAttrData);
-		u.flush();
-
 		
 		/**
 		 * setup patch data
@@ -285,25 +278,29 @@ function setupCL() {
 		 * 设置参数
 		 */
 		var currArg = 0;
-		u.setArg(currArg++, u.getBuffer(BufferNames.CURRENT_POS));	//0
+		oldPosArgIndex = currArg;
+		u.setArg(currArg++, u.getBuffer(BufferNames.CURRENT_POS));	// 0
+		oldVelArgIndex = currArg;
 		u.setArg(currArg++, u.getBuffer(BufferNames.CURRENT_VEL));
 		u.setArg(currArg++, new Uint32Array([numBodies]));
 		u.setArg(currArg++, new Uint32Array([useClusters]));	// 3
 		u.setArg(currArg++, u.getBuffer(BufferNames.CLUSTER_CENTERS));
 		u.setArg(currArg++, u.getBuffer(BufferNames.CLUSTER_MEMBERS));
 		u.setArg(currArg++, new Uint32Array([numClusters]));	// 6
-		totalThreads = numBodies;		// ???????????????????????????????????????????????
+		totalThreads = Math.ceil(numBodies / localWS) * localWS;
 		u.setArg(currArg++, new Uint32Array([totalThreads]));
-		var offset = 0;		// ????????????????????????????????????????
+		var offset = 0;
 		u.setArg(currArg++, new Uint32Array([offset]));
 		u.setArg(currArg++, new Float32Array([delT]));		// 9
 		u.setArg(currArg++, new Float32Array([espSqr]));
 		u.setArg(currArg++, new Uint32Array([noEdgeForces]));
 		u.setArg(currArg++, new Uint32Array([useInvDist]));		// 12
 		u.setArg(currArg++, new Uint32Array([useUserFunctions]));
-		u.setArg(currArg++, u.getBuffer(BufferNames.LOCAL_POS));
-		u.setArg(currArg++, u.getBuffer(BufferNames.LOCAL_NODE_ATTR));	// 15
+		u.setArg(currArg++, new Uint32Array([1]));
+		u.setArg(currArg++, new Uint32Array([1]));	// 15
+		newPosArgIndex = currArg;
 		u.setArg(currArg++, u.getBuffer(BufferNames.NEW_POS));
+		newVelArgIndex = currArg;
 		u.setArg(currArg++, u.getBuffer(BufferNames.NEW_VEL));
 		u.setArg(currArg++, u.getBuffer(BufferNames.EDGE_IND));		// 18
 		u.setArg(currArg++, u.getBuffer(BufferNames.EDGE_DATA));
@@ -316,51 +313,18 @@ function setupCL() {
 		u.setArg(currArg++, u.getBuffer(BufferNames.SPRINGC_PATCH_BUF));
 		u.setArg(currArg++, u.getBuffer(BufferNames.SPRINGL_PATCH_BUF));	// 27
 
-		localWS = [];
-		globalWS = [];
+		localWS = [32];
+		globalWS = [Math.ceil(numBodies / localWS) * localWS];
+		u.enqueueNDRangeKernel(globalWS, localWS);
 
-
-		// console.log(nodeAttrArray);
-		// var d = u.getBufferData(BufferNames.CURRENT_POS)
-		// console.log(d);
-
-		// u.createBuffer(BufferNames.BUFIN1, WebCL.MEM_READ_ONLY, bufSize);
-		// u.writeData(BufferNames.BUFIN1, UIvector1);
-
-		// u.createBuffer(BufferNames.BUFIN2, WebCL.MEM_READ_ONLY, bufSize);
-		// u.writeData(BufferNames.BUFIN2, UIvector2);
-
-		// u.createBuffer(BufferNames.BUFOUT, WebCL.MEM_WRITE_ONLY, bufSize);
-
-		// var currArg = 0;
-		// u.setArg(currArg++, u.getBuffer(BufferNames.BUFIN1));
-		// u.setArg(currArg++, u.getBuffer(BufferNames.BUFIN2));
-		// u.setArg(currArg++, u.getBuffer(BufferNames.BUFOUT));
-		// u.setArg(currArg++, new Uint32Array([vectorLength]));
-
-		// // Init ND-range
-		// localWS = [8];
-		// globalWS = [Math.ceil(vectorLength / localWS) * localWS];
-
-
-		// // Execute (enqueue) kernel
-		// u.enqueueNDRangeKernel(globalWS, localWS);
-
-		// // Read the result buffer from OpenCL device
-		// // var outBuffer = u.enqueueReadBuffer(bufOut, bufSize, vectorLength);
-		// var outBuffer = u.getBufferData(BufferNames.BUFOUT, vectorLength)
+		// var out = u.getBufferData(BufferNames.CURRENT_POS);
 		// u.finish();
+		// console.log(out);
 
-		// console.log(outBuffer);
-		
-
-		// UIvector1 = null;
-		// UIvector2 = null;
-		// outBuffer = null;
 	} catch (e) {
 		console.log(e.message);
 	}
-
+	loopFun();
 }
 
 function setup() {
@@ -376,31 +340,31 @@ var timer;
 var ttt = 0;
 function loop() {
 	timer = setInterval(function() {
-		// Generate input vectors
-		// var vectorLength = 30;
-		// var UIvector1 = new Float32Array(vectorLength);
-		// var UIvector2 = new Float32Array(vectorLength);
-		// for (var i = 0; i < vectorLength; i = i + 1) {
-		// 	UIvector1[i] = Math.floor(Math.random() * 100) + 0.1; //Random number 0..99
-		// 	UIvector2[i] = Math.floor(Math.random() * 100) + 0.1; //Random number 0..99
-		// }
+		var out = u.getBufferData(BufferNames.NEW_POS);
+		for (var i = 0; i < out.length; i++) {
+			pos[i] = out[i];
+		}
+		console.log(out);
+		u.writeData(BufferNames.CURRENT_POS, pos);
 
-		// u.writeData(BufferNames.BUFIN1, UIvector1);
-		// u.writeData(BufferNames.BUFIN2, UIvector2);
+		out = u.getBufferData(BufferNames.NEW_VEL);
+		for (var i = 0; i < out.length; i++) {
+			vel[i] = out[i];
+		}
+		// console.log(out);
+		u.writeData(BufferNames.CURRENT_VEL, vel);
 
-		// u.enqueueNDRangeKernel(globalWS, localWS);
-		// var outBuffer = u.getBufferData(BufferNames.BUFOUT, vectorLength)
-	
-		// u.finish();
+		// u.setArg(newPosArgIndex, u.getBuffer(BufferNames.CURRENT_POS));
+		// u.setArg(newVelArgIndex, u.getBuffer(BufferNames.CURRENT_VEL));
+		// u.setArg(oldPosArgIndex, u.getBuffer(BufferNames.NEW_POS));
+		// u.setArg(oldVelArgIndex, u.getBuffer(BufferNames.NEW_VEL));
 
-		// console.log(outBuffer);
+		u.enqueueNDRangeKernel(globalWS, localWS);
+		u.finish();
 
 
-		// UIvector1 = null;
-		// UIvector2 = null;
-		// outBuffer = null;
 		ttt++;
-	}, 1);
+	}, 1000);
 }
 
 function stop() {
@@ -415,7 +379,5 @@ function start() {
 (function() {
 	
 	setup();
-
-	// loop();
 
 })();
