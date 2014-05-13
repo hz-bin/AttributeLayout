@@ -4,7 +4,7 @@
 	<title>Attribute Based Layout</title>
 	<meta http-equiv="Content-Type" content="text/html;charset=utf-8">
 	<script id="nbody_rk4" type="text/x-opencl">
-		float getPatchVal(float a1, float a2, const __global float *patchData) {
+		float getPatchVal(float a1, float a2, const global float *patchData) {
 			a1 = clamp(a1, 0.0f, 1.0f);
 			a2 = clamp(a2, 0.0f, 1.0f);
 
@@ -12,7 +12,7 @@
 		    const int YRES = convert_int(patchData[1]);
 		    const float MIN = patchData[2];
 		    const float MAX = patchData[3];
-		    const __global float *VALS = patchData + 4;
+		    const global float *VALS = patchData + 4;
 
 		    int idY = convert_int(a2 * (YRES - 1)); //lower y index
 		    int idX = convert_int(a1 * (XRES - 1)); //lower x index
@@ -48,7 +48,7 @@
 
 		float eucDist(
 		        float *a1,
-		        __local float *a2,
+		        local float *a2,
 		        uint len
 		) {
 		    //TODO vectorize this
@@ -270,7 +270,7 @@
 
 		    float4 oldVel = (float4)(0.0);
 		    float4 newVel = oldVel;
-		        
+
 		    //only load data if we have a valid index into the array
 		    if (gIndex < numBodies) {
 		        myPos = pos[gIndex];
@@ -576,9 +576,10 @@
 </head>
 <body>
 	<input type="button" value="取数据" onclick="getData()"/>
-	<div id="output">output</div>
 	<input type="button" value="开始" onclick="start()"/>
 	<input type="button" value="停止" onclick="stop()"/>
+	<div id="graph"></div>
 	<script type="text/javascript" src="index.js"></script>
+	<script type="text/javascript" src="libs/d3.v3.min.js"></script>
 </body>
 </html>

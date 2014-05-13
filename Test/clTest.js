@@ -132,7 +132,7 @@ function loop() {
 
 		console.log(outBuffer);
 		ttt++;
-	}, 1);
+	}, 1000);
 }
 
 function stop() {

@@ -1,3 +1,30 @@
+// d3 data
+var vis;
+var WINDOW_WIDTH = 800;
+var WINDOW_HEIGHT = 600;
+var padding = 20;
+var xScale;
+var yScale;
+var nodes = [];	// 顶点坐标
+/*
+	example
+	var nodes = [{x: 30, y: 50},
+              {x: 50, y: 80},
+              {x: 90, y: 120}]
+*/
+var links = [];	// 边
+/*
+	example
+    var links = [{
+        source: nodes[0],
+        target: nodes[1]
+    }, {
+        source: nodes[2],
+        target: nodes[1]
+    }];
+*/
+
+
 var u;
 var graph;
 var numEdges;
@@ -36,8 +63,6 @@ var useInvDist = 0;
 var useUserFunctions = 0;
 var useDefaultForces = 0;
 
-var localPos = [];
-var localNodeAttrData = [];
 var groupSize = 32;
 var dragCoe = 0.01;
 
@@ -87,31 +112,27 @@ function setupNBody() {
 		pos = [];
 		vel = [];
 
-		var random = new Random;
+		var random = new Random();
 		// initialization of inputs
 		for (var i = 0; i < numBodies; i++) {
 			var index = 4 * i;
 			// First 3 values are position in x,y and z direction
-			for (var j = 0; j < 2; j++) {
-				initPos[index + j] = random.getRandom(0.01, 20);
-			}
+			initPos[index] = random.getRandom(0.01, 20);
+			initPos[index + 1] = random.getRandom(0.01, 20);
 			initPos[index + 2] = 0.0;
 			// 质量
 			initPos[index + 3] = 1.0;
-		}
 
-		for (var i = 0; i < groupSize; i++) {
-			var index = 4 * i;
-			localPos[index] = 0;
-			localPos[index + 1] = 0;
-			localPos[index + 2] = 0;
-			localPos[index + 3] = 0;
-			localNodeAttrData[i] = 0;
+			// D3 需要的数据
+			var o = new Object();
+			o.x = initPos[index];
+			o.y = initPos[index + 1];
+			nodes.push(o);
 		}
 
 		for (var i = 0; i < 4 * numBodies; i++) {
 			// 速率
-			initVel[i] = 0;
+			initVel[i] = 1;
 			clusterMembership[i] = 0;
 		}
 		for (var i = 0; i < 16 * numBodies; i++) {
@@ -140,6 +161,12 @@ function setupNBody() {
 				addedEdges[s].push_back(t);
 				addedEdges[t].push_back(s);
 				numEdges += 1;
+
+				// D3 需要的数据
+				var o = new Object();
+				o.source = nodes[s];
+				o.target = nodes[t];
+				links.push(o);
 			}
 		}
 		console.log("numEdges = " + numEdges);
@@ -185,6 +212,9 @@ function setupNBody() {
 				edgeInd[i * 4] = -1;
 			}
 		}
+
+		initD3(nodes, links);
+
 		setupCL(loop);
 
 	});
@@ -317,14 +347,99 @@ function setupCL(loopFun) {
 		globalWS = [Math.ceil(numBodies / localWS) * localWS];
 		u.enqueueNDRangeKernel(globalWS, localWS);
 
-		// var out = u.getBufferData(BufferNames.CURRENT_POS);
-		// u.finish();
-		// console.log(out);
+		var out = u.getBufferData(BufferNames.NEW_POS);
+		u.finish();
+		console.log(out);
 
 	} catch (e) {
 		console.log(e.message);
 	}
 	loopFun();
+}
+
+function redraw(_nodes, _links) {
+	// console.log(_nodes);
+	xScale = d3.scale.linear()
+		.domain([0, d3.max(_nodes, function(d) { return d.x; })])
+		.range([padding, WINDOW_WIDTH - padding * 2]);
+
+	yScale = d3.scale.linear()
+		.domain([0, d3.max(_nodes, function(d) { return d.y; })])
+		.range([WINDOW_HEIGHT - padding, padding]);
+
+	vis.selectAll("circle")
+        .data(_nodes)
+        .transition()
+        .duration(1)
+        .attr("cx", function (d) {
+            return xScale(d.x);
+        })
+        .attr("cy", function (d) {
+            return yScale(d.y);
+        })
+        .attr("r", 2);
+
+    vis.selectAll("line")
+        .data(_links)
+        .transition()
+        .duration(1)
+        .attr("x1", function (d) {
+            return xScale(d.source.x);
+        })
+        .attr("y1", function (d) {
+            return yScale(d.source.y);
+        })
+        .attr("x2", function (d) {
+            return xScale(d.target.x);
+        })
+        .attr("y2", function (d) {
+            return yScale(d.target.y);
+        })
+        .style("stroke", "rgb(6,120,155)");
+}
+
+function initD3(_nodes, _links) {
+	xScale = d3.scale.linear()
+		.domain([0, d3.max(_nodes, function(d) { return d.x; })])
+		.range([padding, WINDOW_WIDTH - padding * 2]);
+
+	yScale = d3.scale.linear()
+		.domain([0, d3.max(_nodes, function(d) { return d.y; })])
+		.range([WINDOW_HEIGHT - padding, padding]);
+
+	vis = d3.select("#graph").append("svg");
+	vis.attr("width", WINDOW_WIDTH).attr("height", WINDOW_HEIGHT);
+    vis.select("#graph");
+
+    vis.selectAll("circle")
+        .data(_nodes)
+        .enter()
+        .append("circle")
+        .attr("cx", function (d) {
+            return xScale(d.x);
+        })
+        .attr("cy", function (d) {
+            return yScale(d.y);
+        })
+        .attr("r", 2);
+
+    vis.selectAll("line")
+        .data(_links)
+        .enter()
+        .append("line")
+        .attr("x1", function (d) {
+            return xScale(d.source.x);
+        })
+        .attr("y1", function (d) {
+            return yScale(d.source.y);
+        })
+        .attr("x2", function (d) {
+            return xScale(d.target.x);
+        })
+        .attr("y2", function (d) {
+            return yScale(d.target.y);
+        })
+        .style("stroke", "rgb(6,120,155)");
 }
 
 function setup() {
@@ -340,31 +455,51 @@ var timer;
 var ttt = 0;
 function loop() {
 	timer = setInterval(function() {
-		var out = u.getBufferData(BufferNames.NEW_POS);
-		for (var i = 0; i < out.length; i++) {
-			pos[i] = out[i];
-		}
-		console.log(out);
-		u.writeData(BufferNames.CURRENT_POS, pos);
-
-		out = u.getBufferData(BufferNames.NEW_VEL);
-		for (var i = 0; i < out.length; i++) {
-			vel[i] = out[i];
-		}
-		// console.log(out);
-		u.writeData(BufferNames.CURRENT_VEL, vel);
-
-		// u.setArg(newPosArgIndex, u.getBuffer(BufferNames.CURRENT_POS));
-		// u.setArg(newVelArgIndex, u.getBuffer(BufferNames.CURRENT_VEL));
-		// u.setArg(oldPosArgIndex, u.getBuffer(BufferNames.NEW_POS));
-		// u.setArg(oldVelArgIndex, u.getBuffer(BufferNames.NEW_VEL));
+		u.setArg(oldPosArgIndex, u.getBuffer(BufferNames.NEW_POS));
+		u.setArg(oldVelArgIndex, u.getBuffer(BufferNames.NEW_VEL));
 
 		u.enqueueNDRangeKernel(globalWS, localWS);
-		u.finish();
 
+		var out = u.getBufferData(BufferNames.NEW_POS);
+		u.finish();
+		console.log(out);
+
+		nodes = [];
+		for (var i = 0; i < numBodies; i++) {
+			var index = i * 4;
+			var o = new Object();
+			o.x = out[index];
+			o.y = out[index + 1];
+			nodes.push(o);
+		}
+
+		links = [];
+		var edges = [];
+		for (var i = 0; i < numBodies; i++) {
+			edges[i] = new Vector();
+		}
+
+		for (var i = 0; i < numEdges; i++) {
+			var e = graph.getEdge(i);
+			var s = e.getSource();
+			var t = e.getTarget();
+			if (edges[s].contains(t)) {
+				console.log("重复的边：(" + s + ", " + t + ")");
+			} else {
+				edges[s].push_back(t);
+				edges[t].push_back(s);
+				// D3 需要的数据
+				var o = new Object();
+				o.source = nodes[s];
+				o.target = nodes[t];
+				links.push(o);
+			}
+		}
+		//if (ttt % 1 == 0)
+			redraw(nodes, links);
 
 		ttt++;
-	}, 1000);
+	}, 1);
 }
 
 function stop() {
