@@ -226,8 +226,8 @@
 				uint computeEdges,
 				uint useInvDist,		// 12
 				uint useUserFunctions,
-				local float4* localPos,
-				local float *localNodeAttrData,	// 15
+				// local float4* localPos,
+				// local float *localNodeAttrData,	// 15
 				global float4* newPosition,
 				global float4* newVelocity,
 				const global int4 *edgeInd,		// 18
@@ -259,8 +259,8 @@
 		    
 		    float nAttr1Vec[1024];		// MAX_ATTR_VEC_LENGTH = 1024
 		    local float *nAttr2Vec;
-		    // local float4* localPos;
-		    // local float *localNodeAttrData;
+		    local float4 localPos[32];
+		    local float localNodeAttrData[32];
 		    
 		    int4 ei = (int4)(-1);
 

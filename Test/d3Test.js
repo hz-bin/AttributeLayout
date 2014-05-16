@@ -31,7 +31,9 @@ function initD3() {
 	for (var i = 0; i < 3; i++) {
     	var o = new Object();
     	o.x = random.getRandom(50, 1000)
+        o.x = 0;
     	o.y = random.getRandom(50, 1000);
+        o.y = 0;
     	nodes.push(o);
     }
 
@@ -168,5 +170,5 @@ function start() {
 
 (function () {
 	initD3();
-	loop();
+	// loop();
 })();

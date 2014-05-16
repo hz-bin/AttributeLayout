@@ -4,7 +4,7 @@ var bufSize;
 var bufIn1;
 var bufIn2;
 var bufOut;
-var vectorLength = 30;
+var vectorLength = 77;
 var globalWS;
 var localWS;
 
@@ -62,7 +62,7 @@ function setupCL() {
 		u.setArg(currArg++, new Uint32Array([vectorLength]));
 
 		// Init ND-range
-		localWS = [8];
+		localWS = [32];
 		globalWS = [Math.ceil(vectorLength / localWS) * localWS];
 
 		output.innerHTML += "<br>Global work item size: " + globalWS;

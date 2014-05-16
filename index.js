@@ -74,6 +74,12 @@ var oldVelArgIndex;
 var newPosArgIndex;
 var newVelArgIndex;
 
+//CL data
+var exchange = 1;
+// var totalThreads = 0;
+// var totalComputeUnits = 0;
+
+
 var BufferNames = {
 	CURRENT_POS : 0,
     CURRENT_POS_SUB : 1,
@@ -117,8 +123,8 @@ function setupNBody() {
 		for (var i = 0; i < numBodies; i++) {
 			var index = 4 * i;
 			// First 3 values are position in x,y and z direction
-			initPos[index] = random.getRandom(0.01, 20);
-			initPos[index + 1] = random.getRandom(0.01, 20);
+			initPos[index] = random.getRandom(WIDTH / 4, WIDTH / 2);
+			initPos[index + 1] = random.getRandom(HEIGHT / 4, HEIGHT / 2);
 			initPos[index + 2] = 0.0;
 			// 质量
 			initPos[index + 3] = 1.0;
@@ -317,7 +323,8 @@ function setupCL(loopFun) {
 		u.setArg(currArg++, u.getBuffer(BufferNames.CLUSTER_CENTERS));
 		u.setArg(currArg++, u.getBuffer(BufferNames.CLUSTER_MEMBERS));
 		u.setArg(currArg++, new Uint32Array([numClusters]));	// 6
-		totalThreads = Math.ceil(numBodies / localWS) * localWS;
+		totalThreads = Math.ceil(numBodies / 32) * 32;
+		console.log("totalThreads: " + totalThreads);
 		u.setArg(currArg++, new Uint32Array([totalThreads]));
 		var offset = 0;
 		u.setArg(currArg++, new Uint32Array([offset]));
@@ -326,8 +333,8 @@ function setupCL(loopFun) {
 		u.setArg(currArg++, new Uint32Array([noEdgeForces]));
 		u.setArg(currArg++, new Uint32Array([useInvDist]));		// 12
 		u.setArg(currArg++, new Uint32Array([useUserFunctions]));
-		u.setArg(currArg++, new Uint32Array([1]));
-		u.setArg(currArg++, new Uint32Array([1]));	// 15
+		// u.setArg(currArg++, new Uint32Array([1]));
+		// u.setArg(currArg++, new Uint32Array([1]));	// 15
 		newPosArgIndex = currArg;
 		u.setArg(currArg++, u.getBuffer(BufferNames.NEW_POS));
 		newVelArgIndex = currArg;
@@ -345,16 +352,18 @@ function setupCL(loopFun) {
 
 		localWS = [32];
 		globalWS = [Math.ceil(numBodies / localWS) * localWS];
-		u.enqueueNDRangeKernel(globalWS, localWS);
+		// u.enqueueNDRangeKernel(globalWS, localWS);
 
-		var out = u.getBufferData(BufferNames.NEW_POS);
-		u.finish();
-		console.log(out);
+		// console.log("success");
+
+		// var out = u.getBufferData(BufferNames.NEW_POS);
+		// u.finish();
+		// console.log(out);
 
 	} catch (e) {
 		console.log(e.message);
 	}
-	loopFun();
+	// loopFun();
 }
 
 function redraw(_nodes, _links) {
@@ -365,7 +374,7 @@ function redraw(_nodes, _links) {
 
 	yScale = d3.scale.linear()
 		.domain([0, d3.max(_nodes, function(d) { return d.y; })])
-		.range([WINDOW_HEIGHT - padding, padding]);
+		.range([padding, WINDOW_HEIGHT - padding * 2]);
 
 	vis.selectAll("circle")
         .data(_nodes)
@@ -373,9 +382,11 @@ function redraw(_nodes, _links) {
         .duration(1)
         .attr("cx", function (d) {
             return xScale(d.x);
+            // return d.x;
         })
         .attr("cy", function (d) {
             return yScale(d.y);
+            // return d.y;
         })
         .attr("r", 2);
 
@@ -385,15 +396,19 @@ function redraw(_nodes, _links) {
         .duration(1)
         .attr("x1", function (d) {
             return xScale(d.source.x);
+            // return d.source.x;
         })
         .attr("y1", function (d) {
             return yScale(d.source.y);
+            // return d.source.y;
         })
         .attr("x2", function (d) {
             return xScale(d.target.x);
+            // return d.target.x;
         })
         .attr("y2", function (d) {
             return yScale(d.target.y);
+            // return d.target.y;
         })
         .style("stroke", "rgb(6,120,155)");
 }
@@ -405,7 +420,7 @@ function initD3(_nodes, _links) {
 
 	yScale = d3.scale.linear()
 		.domain([0, d3.max(_nodes, function(d) { return d.y; })])
-		.range([WINDOW_HEIGHT - padding, padding]);
+		.range([padding, WINDOW_HEIGHT - padding * 2]);
 
 	vis = d3.select("#graph").append("svg");
 	vis.attr("width", WINDOW_WIDTH).attr("height", WINDOW_HEIGHT);
@@ -417,9 +432,11 @@ function initD3(_nodes, _links) {
         .append("circle")
         .attr("cx", function (d) {
             return xScale(d.x);
+            // return d.x;
         })
         .attr("cy", function (d) {
             return yScale(d.y);
+            // return d.y;
         })
         .attr("r", 2);
 
@@ -429,15 +446,19 @@ function initD3(_nodes, _links) {
         .append("line")
         .attr("x1", function (d) {
             return xScale(d.source.x);
+            // return d.source.x;
         })
         .attr("y1", function (d) {
             return yScale(d.source.y);
+            // return d.source.y;
         })
         .attr("x2", function (d) {
             return xScale(d.target.x);
+            // return d.target.x;
         })
         .attr("y2", function (d) {
             return yScale(d.target.y);
+            // return d.target.y;
         })
         .style("stroke", "rgb(6,120,155)");
 }
@@ -455,50 +476,81 @@ var timer;
 var ttt = 0;
 function loop() {
 	timer = setInterval(function() {
-		u.setArg(oldPosArgIndex, u.getBuffer(BufferNames.NEW_POS));
-		u.setArg(oldVelArgIndex, u.getBuffer(BufferNames.NEW_VEL));
+		try {
+			// update patch data
+			// ........
+			// u.runKernel("nbody_sim_2D_rk4");
 
-		u.enqueueNDRangeKernel(globalWS, localWS);
+			// console.log("loop function");
 
-		var out = u.getBufferData(BufferNames.NEW_POS);
-		u.finish();
-		console.log(out);
+			u.enqueueNDRangeKernel(globalWS, localWS);
 
-		nodes = [];
-		for (var i = 0; i < numBodies; i++) {
-			var index = i * 4;
-			var o = new Object();
-			o.x = out[index];
-			o.y = out[index + 1];
-			nodes.push(o);
-		}
+			// console.log("loop function2");
+			// var curPosName = (exchange) ? BufferNames.CURRENT_POS : BufferNames.NEW_POS;
+			var out = u.getBufferData(BufferNames.NEW_POS);
+			u.finish();
+			console.log(out);
 
-		links = [];
-		var edges = [];
-		for (var i = 0; i < numBodies; i++) {
-			edges[i] = new Vector();
-		}
+			// out = u.getBufferData(BufferNames.NEW_VEL);
+			// console.log(out);
 
-		for (var i = 0; i < numEdges; i++) {
-			var e = graph.getEdge(i);
-			var s = e.getSource();
-			var t = e.getTarget();
-			if (edges[s].contains(t)) {
-				console.log("重复的边：(" + s + ", " + t + ")");
-			} else {
-				edges[s].push_back(t);
-				edges[t].push_back(s);
-				// D3 需要的数据
+			// if (exchange == 0) {
+			// 	exchange = 1;
+			// } else if (exchange == 1) {
+			// 	exchange = 0;
+			// }
+
+			// if (exchange) {
+				// u.setArg(newPosArgIndex, u.getBuffer(BufferNames.CURRENT_POS));
+				// u.setArg(newVelArgIndex, u.getBuffer(BufferNames.CURRENT_VEL));
+				u.setArg(oldPosArgIndex, u.getBuffer(BufferNames.NEW_POS));
+				u.setArg(oldVelArgIndex, u.getBuffer(BufferNames.NEW_VEL));
+			// } else {
+			// 	u.setArg(newPosArgIndex, u.getBuffer(BufferNames.NEW_POS));
+			// 	u.setArg(newVelArgIndex, u.getBuffer(BufferNames.NEW_VEL));
+			// 	u.setArg(oldPosArgIndex, u.getBuffer(BufferNames.CURRENT_POS));
+			// 	u.setArg(oldVelArgIndex, u.getBuffer(BufferNames.CURRENT_VEL));
+			// }
+
+			nodes.length = 0;
+			for (var i = 0; i < numBodies; i++) {
+				var index = i * 4;
 				var o = new Object();
-				o.source = nodes[s];
-				o.target = nodes[t];
-				links.push(o);
+				o.x = out[index];
+				o.y = out[index + 1];
+				nodes.push(o);
 			}
-		}
-		//if (ttt % 1 == 0)
-			redraw(nodes, links);
 
-		ttt++;
+			links.length = 0;
+			var edges = [];
+			for (var i = 0; i < numBodies; i++) {
+				edges[i] = new Vector();
+			}
+
+			for (var i = 0; i < numEdges; i++) {
+				var e = graph.getEdge(i);
+				var s = e.getSource();
+				var t = e.getTarget();
+				if (edges[s].contains(t)) {
+					console.log("重复的边：(" + s + ", " + t + ")");
+				} else {
+					edges[s].push_back(t);
+					edges[t].push_back(s);
+					// D3 需要的数据
+					var o = new Object();
+					o.source = nodes[s];
+					o.target = nodes[t];
+					links.push(o);
+				}
+			}
+			//if (ttt % 1 == 0)
+				redraw(nodes, links);
+
+			ttt++;
+		} catch (e) {
+			console.log(e.message);
+			clearInterval(timer);
+		}
 	}, 1);
 }
 

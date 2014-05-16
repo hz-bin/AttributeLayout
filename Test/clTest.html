@@ -12,11 +12,13 @@
 		    global float * vectorOut,
 		    uint uiVectorWidth) {
 		    uint x = get_global_id(0);
+		    uint size = get_local_id(0);
 		    if (x >= uiVectorWidth) {
 		        return;
 		    }
 		    // add the vector elements
-		    vectorOut[x] = add(vectorIn1[x], vectorIn2[x]);
+		    // vectorOut[x] = add(vectorIn1[x], vectorIn2[x]);
+		    vectorOut[x] = add(size, size) / 2;
 		}
 	</script>   
 	<script type="text/javascript">
