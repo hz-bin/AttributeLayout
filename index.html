@@ -215,10 +215,10 @@
 				global float4* pos, //0
 				global float4* vel,
 				int numBodies,
-				uint useClusters,		//3
-				const global float4 *clusters,
-				const global int *clusterMembers,
-				int numClusters,		// 6
+				// uint useClusters,		//3
+				// const global float4 *clusters,
+				// const global int *clusterMembers,
+				//int numClusters,		// 6
 				int totalThreads,
 				int offset,
 				float deltaTime,		// 9
@@ -236,7 +236,7 @@
 				const global float *nodeAttrData,		// 21
 				uint attrVecLength,
 				float dragCoe,
-				uint useDefaults,			// 24
+				// uint useDefaults,			// 24
 				const global float *gravPatchData,
 				const global float *springCPatchData,
 				const global float *springLPatchData		// 27
@@ -565,9 +565,10 @@
 	</script>
 
 	<script type="text/javascript" src="libs/jquery-1.8.1.min.js"></script>
+	<script type="text/javascript" src="libs/d3.v3.min.js"></script>
 	<script type="text/javascript" src="utils/Vector.class.js"></script>
 	<script type="text/javascript" src="utils/Map.class.js"></script>
-	<script type="text/javascript" src="utils/Random.class.js"></script>
+	<script type="text/javascript" src="utils/Math.class.js"></script>
 	<script type="text/javascript" src="class/Attribute.class.js"></script>
 	<script type="text/javascript" src="class/Graph.class.js"></script>
 	<script type="text/javascript" src="class/CLUnit.class.js"></script>
@@ -578,8 +579,11 @@
 	<input type="button" value="取数据" onclick="getData()"/>
 	<input type="button" value="开始" onclick="start()"/>
 	<input type="button" value="停止" onclick="stop()"/>
+	<input type="button" value="显示边" onclick="showEdge()"/>
+	<input type="button" value="不显示边" onclick="noEdge()"/>
+
 	<div id="graph"></div>
 	<script type="text/javascript" src="index.js"></script>
-	<script type="text/javascript" src="libs/d3.v3.min.js"></script>
+	
 </body>
 </html>

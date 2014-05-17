@@ -29,7 +29,7 @@ function CLUnit() {
 	};
 
 	this.getBuffer = function(id) {
-		var obj = buffers.get(id)
+		var obj = buffers.get(id);
 		return obj.getBuffer();
 	};
 

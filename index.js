@@ -50,18 +50,17 @@ var edgeInd = [];	// maps node indices into edgeData array.
 var edgeData = [];	//neighbor indices. Indexed into by edgeInd
 var edgeForceData = []; //spring coefficient and length for each edge
 
-var useClusters = 0;
-var clusterCenters = [];
-var clusterMembership = [];
-var numClusters = 0;
-var totalThreads = 0;
+// var useClusters = 0;
+// var clusterCenters = [];
+// var clusterMembership = [];
+// var numClusters = 0;
 
 var delT = 1.0;
 var espSqr = 500;
 var noEdgeForces = 0;	// 1 表示不考虑边的力，0表示考虑边的力
 var useInvDist = 0;
 var useUserFunctions = 0;
-var useDefaultForces = 0;
+// var useDefaultForces = 0;
 
 var groupSize = 32;
 var dragCoe = 0.01;
@@ -76,8 +75,11 @@ var newVelArgIndex;
 
 //CL data
 var exchange = 1;
-// var totalThreads = 0;
+var totalThreads = 0;
 // var totalComputeUnits = 0;
+
+
+var drawEdges = 1;
 
 
 var BufferNames = {
@@ -112,19 +114,21 @@ function setupNBody() {
 		numBodies = numParticles;
 		console.log("numBodies = " + numBodies);
 		nodeAttrArray = graph.getColData("group");
+		MathUtils.normalize(nodeAttrArray);
+		console.log("nodeAttrArray: " + nodeAttrArray)
 
 		initPos = [];
 		initVel = [];
 		pos = [];
 		vel = [];
 
-		var random = new Random();
+		nodes.length = 0;
 		// initialization of inputs
 		for (var i = 0; i < numBodies; i++) {
 			var index = 4 * i;
 			// First 3 values are position in x,y and z direction
-			initPos[index] = random.getRandom(WIDTH / 4, WIDTH / 2);
-			initPos[index + 1] = random.getRandom(HEIGHT / 4, HEIGHT / 2);
+			initPos[index] = MathUtils.random(20, WIDTH - 20);
+			initPos[index + 1] = MathUtils.random(20, HEIGHT - 20);
 			initPos[index + 2] = 0.0;
 			// 质量
 			initPos[index + 3] = 1.0;
@@ -138,12 +142,12 @@ function setupNBody() {
 
 		for (var i = 0; i < 4 * numBodies; i++) {
 			// 速率
-			initVel[i] = 1;
-			clusterMembership[i] = 0;
+			initVel[i] = 0;
+			// clusterMembership[i] = 0;
 		}
-		for (var i = 0; i < 16 * numBodies; i++) {
-			clusterCenters[i] = 0;
-		}
+		// for (var i = 0; i < 16 * numBodies; i++) {
+		// 	clusterCenters[i] = 0;
+		// }
 
 		pos = initPos;
 		vel = initVel;
@@ -157,6 +161,7 @@ function setupNBody() {
 		}
 		numEdges = 0; 
 		// 这里要用set
+		links.length = 0;
 		for (var i = 0; i < graph.getEdgeCount(); i++) {
 			var e = graph.getEdge(i);
 			var s = e.getSource();
@@ -249,6 +254,7 @@ function setupCL(loopFun) {
 		u.writeData(BufferNames.CURRENT_POS, pos);
 
 		u.createBuffer(BufferNames.NEW_POS, WebCL.MEM_READ_WRITE, numBodies * 16);
+		u.writeData(BufferNames.NEW_POS, pos);
 		u.flush();
 
 		u.createBuffer(BufferNames.EDGE_IND, WebCL.MEM_READ_ONLY, numBodies * 16);
@@ -277,12 +283,13 @@ function setupCL(loopFun) {
 
 
 		u.createBuffer(BufferNames.NEW_VEL, WebCL.MEM_READ_WRITE, numBodies * 16);
+		u.writeData(BufferNames.NEW_VEL, vel);
 
-		u.createBuffer(BufferNames.CLUSTER_CENTERS, WebCL.MEM_WRITE_ONLY, numBodies * 16);
-		u.writeData(BufferNames.CLUSTER_CENTERS, clusterCenters);
+		// u.createBuffer(BufferNames.CLUSTER_CENTERS, WebCL.MEM_WRITE_ONLY, numBodies * 16);
+		// u.writeData(BufferNames.CLUSTER_CENTERS, clusterCenters);
 
-		u.createBuffer(BufferNames.CLUSTER_MEMBERS, WebCL.MEM_WRITE_ONLY, numBodies * 4);
-		u.writeData(BufferNames.CLUSTER_MEMBERS, clusterMembership);
+		// u.createBuffer(BufferNames.CLUSTER_MEMBERS, WebCL.MEM_WRITE_ONLY, numBodies * 4);
+		// u.writeData(BufferNames.CLUSTER_MEMBERS, clusterMembership);
 		u.finish();
 		
 		/**
@@ -290,21 +297,21 @@ function setupCL(loopFun) {
 		 */
 		// gravity
 		var patchTotalSize = 8;
-		var gravPatchData = [2, 2, -0.001, -1000, 0, 1, 1, 1];
+		var gravPatchData = [2, 2, -0.001, -1000, 0.5, 0.5, 0.5, 0.5];
 		u.createBuffer(BufferNames.GRAV_PATCH_BUF, WebCL.MEM_WRITE_ONLY, patchTotalSize * 4);
 		u.writeData(BufferNames.GRAV_PATCH_BUF, gravPatchData);
 		u.flush();
 
 		// spring coefficient
 		// patchTotalSize = 8;
-		var springCPatchData = [2, 2, 0.000001, 0.001, 1, 0.5, 0.5, 1];
+		var springCPatchData = [2, 2, 0.000001, 0.001, 0.5, 0.5, 0.5, 0.5];
 		u.createBuffer(BufferNames.SPRINGC_PATCH_BUF, WebCL.MEM_WRITE_ONLY, patchTotalSize * 4);
 		u.writeData(BufferNames.SPRINGC_PATCH_BUF, springCPatchData);
 		u.flush();
 
 		// spring length
 		// patchTotalSize = 8;
-		var springLPatchData = [2, 2, 0.1, 30, 1, 0.5, 0.5, 1];
+		var springLPatchData = [2, 2, 0.1, 30, 0.5, 0.5, 0.5, 0.5];
 		u.createBuffer(BufferNames.SPRINGL_PATCH_BUF, WebCL.MEM_WRITE_ONLY, patchTotalSize * 4);
 		u.writeData(BufferNames.SPRINGL_PATCH_BUF, springLPatchData);
 		u.flush();
@@ -319,10 +326,10 @@ function setupCL(loopFun) {
 		oldVelArgIndex = currArg;
 		u.setArg(currArg++, u.getBuffer(BufferNames.CURRENT_VEL));
 		u.setArg(currArg++, new Uint32Array([numBodies]));
-		u.setArg(currArg++, new Uint32Array([useClusters]));	// 3
-		u.setArg(currArg++, u.getBuffer(BufferNames.CLUSTER_CENTERS));
-		u.setArg(currArg++, u.getBuffer(BufferNames.CLUSTER_MEMBERS));
-		u.setArg(currArg++, new Uint32Array([numClusters]));	// 6
+		// u.setArg(currArg++, new Uint32Array([useClusters]));	// 3
+		// u.setArg(currArg++, u.getBuffer(BufferNames.CLUSTER_CENTERS));
+		// u.setArg(currArg++, u.getBuffer(BufferNames.CLUSTER_MEMBERS));
+		// u.setArg(currArg++, new Uint32Array([numClusters]));	// 6
 		totalThreads = Math.ceil(numBodies / 32) * 32;
 		console.log("totalThreads: " + totalThreads);
 		u.setArg(currArg++, new Uint32Array([totalThreads]));
@@ -345,7 +352,7 @@ function setupCL(loopFun) {
 		u.setArg(currArg++, u.getBuffer(BufferNames.NODE_ATTR_DATA));	// 21
 		u.setArg(currArg++, new Uint32Array([attrVecLength]));
 		u.setArg(currArg++, new Float32Array([dragCoe]));
-		u.setArg(currArg++, new Uint32Array([useDefaultForces]));	// 24
+		// u.setArg(currArg++, new Uint32Array([useDefaultForces]));	// 24
 		u.setArg(currArg++, u.getBuffer(BufferNames.GRAV_PATCH_BUF));
 		u.setArg(currArg++, u.getBuffer(BufferNames.SPRINGC_PATCH_BUF));
 		u.setArg(currArg++, u.getBuffer(BufferNames.SPRINGL_PATCH_BUF));	// 27
@@ -368,59 +375,61 @@ function setupCL(loopFun) {
 
 function redraw(_nodes, _links) {
 	// console.log(_nodes);
-	xScale = d3.scale.linear()
-		.domain([0, d3.max(_nodes, function(d) { return d.x; })])
-		.range([padding, WINDOW_WIDTH - padding * 2]);
+	// xScale = d3.scale.linear()
+	// 	.domain([0, d3.max(_nodes, function(d) { return d.x; })])
+	// 	.range([padding, WINDOW_WIDTH - padding * 2]);
 
-	yScale = d3.scale.linear()
-		.domain([0, d3.max(_nodes, function(d) { return d.y; })])
-		.range([padding, WINDOW_HEIGHT - padding * 2]);
+	// yScale = d3.scale.linear()
+	// 	.domain([0, d3.max(_nodes, function(d) { return d.y; })])
+	// 	.range([padding, WINDOW_HEIGHT - padding * 2]);
 
 	vis.selectAll("circle")
         .data(_nodes)
         .transition()
         .duration(1)
         .attr("cx", function (d) {
-            return xScale(d.x);
-            // return d.x;
+            // return xScale(d.x);
+            return d.x;
         })
         .attr("cy", function (d) {
-            return yScale(d.y);
-            // return d.y;
+            // return yScale(d.y);
+            return d.y;
         })
         .attr("r", 2);
-
-    vis.selectAll("line")
-        .data(_links)
-        .transition()
-        .duration(1)
-        .attr("x1", function (d) {
-            return xScale(d.source.x);
-            // return d.source.x;
-        })
-        .attr("y1", function (d) {
-            return yScale(d.source.y);
-            // return d.source.y;
-        })
-        .attr("x2", function (d) {
-            return xScale(d.target.x);
-            // return d.target.x;
-        })
-        .attr("y2", function (d) {
-            return yScale(d.target.y);
-            // return d.target.y;
-        })
-        .style("stroke", "rgb(6,120,155)");
+    if (drawEdges) {
+    	vis.selectAll("line")
+	        .data(_links)
+	        .transition()
+	        .duration(1)
+	        .attr("x1", function (d) {
+	            // return xScale(d.source.x);
+	            return d.source.x;
+	        })
+	        .attr("y1", function (d) {
+	            // return yScale(d.source.y);
+	            return d.source.y;
+	        })
+	        .attr("x2", function (d) {
+	            // return xScale(d.target.x);
+	            return d.target.x;
+	        })
+	        .attr("y2", function (d) {
+	            // return yScale(d.target.y);
+	            return d.target.y;
+	        })
+	        .style("stroke", "rgb(6,120,155)");
+    }
+    
 }
 
 function initD3(_nodes, _links) {
-	xScale = d3.scale.linear()
-		.domain([0, d3.max(_nodes, function(d) { return d.x; })])
-		.range([padding, WINDOW_WIDTH - padding * 2]);
+	// xScale = d3.scale.linear()
+	// 	.domain([0, d3.max(_nodes, function(d) { return d.x; })])
+	// 	.range([padding, WINDOW_WIDTH - padding * 2]);
 
-	yScale = d3.scale.linear()
-		.domain([0, d3.max(_nodes, function(d) { return d.y; })])
-		.range([padding, WINDOW_HEIGHT - padding * 2]);
+	// yScale = d3.scale.linear()
+	// 	.domain([0, d3.max(_nodes, function(d) { return d.y; })])
+	// 	.range([padding, WINDOW_HEIGHT - padding * 2]);
 
 	vis = d3.select("#graph").append("svg");
 	vis.attr("width", WINDOW_WIDTH).attr("height", WINDOW_HEIGHT);
@@ -431,36 +440,39 @@ function initD3(_nodes, _links) {
         .enter()
         .append("circle")
         .attr("cx", function (d) {
-            return xScale(d.x);
-            // return d.x;
+            // return xScale(d.x);
+            return d.x;
         })
         .attr("cy", function (d) {
-            return yScale(d.y);
-            // return d.y;
+            // return yScale(d.y);
+            return d.y;
         })
         .attr("r", 2);
 
-    vis.selectAll("line")
-        .data(_links)
-        .enter()
-        .append("line")
-        .attr("x1", function (d) {
-            return xScale(d.source.x);
-            // return d.source.x;
-        })
-        .attr("y1", function (d) {
-            return yScale(d.source.y);
-            // return d.source.y;
-        })
-        .attr("x2", function (d) {
-            return xScale(d.target.x);
-            // return d.target.x;
-        })
-        .attr("y2", function (d) {
-            return yScale(d.target.y);
-            // return d.target.y;
-        })
-        .style("stroke", "rgb(6,120,155)");
+    if (drawEdges) {
+    	vis.selectAll("line")
+	        .data(_links)
+	        .enter()
+	        .append("line")
+	        .attr("x1", function (d) {
+	            // return xScale(d.source.x);
+	            return d.source.x;
+	        })
+	        .attr("y1", function (d) {
+	            // return yScale(d.source.y);
+	            return d.source.y;
+	        })
+	        .attr("x2", function (d) {
+	            // return xScale(d.target.x);
+	            return d.target.x;
+	        })
+	        .attr("y2", function (d) {
+	            // return yScale(d.target.y);
+	            return d.target.y;
+	        })
+	        .style("stroke", "rgb(6,120,155)");
+    }
+    
 }
 
 function setup() {
@@ -489,7 +501,7 @@ function loop() {
 			// var curPosName = (exchange) ? BufferNames.CURRENT_POS : BufferNames.NEW_POS;
 			var out = u.getBufferData(BufferNames.NEW_POS);
 			u.finish();
-			console.log(out);
+			// console.log(out);
 
 			// out = u.getBufferData(BufferNames.NEW_VEL);
 			// console.log(out);
@@ -513,13 +525,23 @@ function loop() {
 			// }
 
 			nodes.length = 0;
+			var posx = [];
+			var posy = [];
 			for (var i = 0; i < numBodies; i++) {
 				var index = i * 4;
+				posx[i] = out[index];
+				posy[i] = out[index + 1];
+			}
+			MathUtils.range(posx, 20, WINDOW_WIDTH - 20);
+			MathUtils.range(posy, 20, WINDOW_HEIGHT - 20);
+
+			for (var i = 0; i < numBodies; i++) {
 				var o = new Object();
-				o.x = out[index];
-				o.y = out[index + 1];
+				o.x = posx[i];
+				o.y = posy[i];
 				nodes.push(o);
 			}
+
 
 			links.length = 0;
 			var edges = [];
@@ -561,6 +583,16 @@ function stop() {
 
 function start() {
 	loop();
+}
+
+function showEdge() {
+	drawEdges = 1;
+	console.log("drawEdges: " + drawEdges);
+}
+
+function noEdge() {
+	drawEdges = 0;
+	console.log("drawEdges: " + drawEdges);
 }
 
 (function() {
